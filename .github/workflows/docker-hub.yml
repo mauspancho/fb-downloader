@@ -1,0 +1,80 @@
+# Build + prueba + push a Docker Hub en cada push a main (o manual).
+#
+# Requiere 2 secrets en este repositorio (Settings → Secrets and variables → Actions):
+#   DOCKERHUB_USERNAME — usuario de Docker Hub (mausp)
+#   DOCKERHUB_TOKEN    — Access Token de Docker Hub (hub.docker.com → Account Settings → Security → Access Tokens; permisos Read/Write)
+#
+# La versión de la imagen se saca de docker-compose.yml (image: mausp/fb-downloader:2.0.1);
+# para publicar una versión nueva, edita esa línea y haz push.
+
+name: Docker Hub
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-hub
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determinar versión
+        id: ver
+        run: |
+          V=$(grep -o 'mausp/fb-downloader:[0-9][0-9.]*' docker-compose.yml | head -1 | cut -d: -f2)
+          if [ -z "$V" ]; then
+            V="dev-$(git rev-parse --short HEAD)"
+            echo "AVISO: no se encontró versión en docker-compose.yml; usando $V"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build (carga local para prueba)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: mausp/fb-downloader:${{ steps.ver.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prueba de humo
+        run: |
+          IMAGEN="mausp/fb-downloader:${{ steps.ver.outputs.version }}"
+          docker run -d --name fbdl-test -p 8093:80 "$IMAGEN"
+          for i in $(seq 1 20); do
+            RESP=$(curl -fsS -o /dev/null -w '%{http_code}' http://127.0.0.1:8093/ 2>/dev/null || true)
+            if [ "$RESP" = "200" ]; then echo "health OK"; break; fi
+            sleep 1
+          done
+          [ "$RESP" = "200" ] || { docker logs fbdl-test 2>&1 | tail -20; docker rm -f fbdl-test >/dev/null 2>&1 || true; exit 1; }
+          # superficie interna nunca servida
+          for p in /Dockerfile /docker-compose.yml /src/Config.php; do
+            C=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8093$p")
+            [ "$C" = "404" ] || { echo "FALLO: $p devolvió $C (esperado 404)"; docker rm -f fbdl-test >/dev/null 2>&1 || true; exit 1; }
+          done
+          docker rm -f fbdl-test >/dev/null
+          echo "prueba de humo superada"
+
+      - name: Push (versión + latest)
+        run: |
+          IMAGEN="mausp/fb-downloader"
+          VERS="${{ steps.ver.outputs.version }}"
+          docker tag "$IMAGEN:$VERS" "$IMAGEN:latest"
+          docker push "$IMAGEN:$VERS"
+          docker push "$IMAGEN:latest"
