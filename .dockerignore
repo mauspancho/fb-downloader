@@ -1,0 +1,4 @@
+# Archivos de desarrollo/SCM fuera del contexto de build
+.git
+.gitignore
+*.md

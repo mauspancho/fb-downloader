@@ -1,0 +1,20 @@
+# fb-downloader 2.0 — contenedor único con streaming sin persistencia.
+# Uso: docker compose up -d --build
+
+services:
+  fb-downloader:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: mausp/fb-downloader:2.0.1
+    container_name: fb-downloader
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8089:80"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      # Configuración local (app.dist.php y, opcionalmente, app.php, cookies.txt).
+      - ./config:/var/www/config:ro

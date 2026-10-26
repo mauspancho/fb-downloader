@@ -1,0 +1,11 @@
+# Configuración local que no debe publicarse
+config/app.php
+config/cookies.txt
+*.pem
+*.key
+
+# IDE y temporales
+.vscode/
+.idea/
+*.swp
+.DS_Store
